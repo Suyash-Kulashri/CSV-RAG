@@ -172,28 +172,74 @@ class MilvusClient:
         }
         
         # Perform search
-        results = self.collection.search(
-            data=[query_embedding.tolist()],
-            anns_field="embedding",
-            param=search_params,
-            limit=top_k,
-            expr=filter_expr,
-            output_fields=["text", "parts_town_number", "manufacturer_number", "pdf_url", "page_number"]
-        )
+        try:
+            results = self.collection.search(
+                data=[query_embedding.tolist()],
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                expr=filter_expr,
+                output_fields=["text", "parts_town_number", "manufacturer_number", "pdf_url", "page_number"]
+            )
+        except Exception as e:
+            print(f"Error during Milvus search: {e}")
+            # Try without filter if filter caused the error
+            if filter_expr:
+                try:
+                    results = self.collection.search(
+                        data=[query_embedding.tolist()],
+                        anns_field="embedding",
+                        param=search_params,
+                        limit=top_k,
+                        output_fields=["text", "parts_town_number", "manufacturer_number", "pdf_url", "page_number"]
+                    )
+                except Exception as e2:
+                    print(f"Error during Milvus search without filter: {e2}")
+                    return []
+            else:
+                return []
         
-        # Format results
+        # Format results - access entity data correctly for pymilvus 2.6.x
         formatted_results = []
         for hits in results:
             for hit in hits:
-                formatted_results.append({
-                    'id': hit.id,
-                    'distance': hit.distance,
-                    'text': hit.entity.get('text'),
-                    'parts_town_number': hit.entity.get('parts_town_number'),
-                    'manufacturer_number': hit.entity.get('manufacturer_number'),
-                    'pdf_url': hit.entity.get('pdf_url'),
-                    'page_number': hit.entity.get('page_number'),
-                })
+                try:
+                    # In pymilvus 2.6.x, entity fields are accessed as attributes
+                    # Check if entity exists and has the expected structure
+                    if hasattr(hit, 'entity') and hit.entity:
+                        entity = hit.entity
+                        formatted_results.append({
+                            'id': hit.id,
+                            'distance': float(hit.distance),
+                            'text': str(getattr(entity, 'text', '')),
+                            'parts_town_number': str(getattr(entity, 'parts_town_number', '')),
+                            'manufacturer_number': str(getattr(entity, 'manufacturer_number', '')),
+                            'pdf_url': str(getattr(entity, 'pdf_url', '')),
+                            'page_number': int(getattr(entity, 'page_number', 0)),
+                        })
+                    else:
+                        # Entity data not available, return minimal result
+                        formatted_results.append({
+                            'id': hit.id,
+                            'distance': float(hit.distance),
+                            'text': '',
+                            'parts_town_number': '',
+                            'manufacturer_number': '',
+                            'pdf_url': '',
+                            'page_number': 0,
+                        })
+                except Exception as e:
+                    print(f"Warning: Error extracting entity data: {e}")
+                    # Return minimal result on error
+                    formatted_results.append({
+                        'id': hit.id,
+                        'distance': float(hit.distance),
+                        'text': '',
+                        'parts_town_number': '',
+                        'manufacturer_number': '',
+                        'pdf_url': '',
+                        'page_number': 0,
+                    })
         
         return formatted_results
     

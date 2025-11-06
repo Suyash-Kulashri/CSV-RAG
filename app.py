@@ -21,6 +21,10 @@ from data_ingestion.csv_to_neo4j import CSVToNeo4j
 from data_ingestion.pdf_to_milvus import PDFToMilvus
 from database.neo4j_client import Neo4jClient
 from database.milvus_client import MilvusClient
+from query_engine.query_parser import QueryParser
+from query_engine.retriever import Retriever
+from query_engine.response_builder import ResponseBuilder
+from utils.embeddings import EmbeddingGenerator
 
 
 st.set_page_config(
@@ -38,6 +42,12 @@ if 'neo4j_client' not in st.session_state:
     st.session_state.data_loaded = False
     st.session_state.connection_error = None
     st.session_state.connection_attempted = False
+    st.session_state.query_parser = None
+    st.session_state.retriever = None
+    st.session_state.response_builder = None
+    st.session_state.conversation_history = []  # Buffer memory for conversation
+    st.session_state.databases_checked = False
+    st.session_state.databases_have_data = False
 
 # Automatically connect to Neo4j and Milvus on startup using environment variables (only once)
 if not st.session_state.connection_attempted:
@@ -56,6 +66,44 @@ if not st.session_state.connection_attempted:
     except Exception as e:
         st.session_state.milvus_client = None
         # Don't set error, Milvus is optional
+    
+    # Initialize query engine components if databases are connected
+    if st.session_state.neo4j_client:
+        try:
+            st.session_state.query_parser = QueryParser()
+            # Initialize retriever with embedding generator if Milvus is available
+            embedding_gen = None
+            if st.session_state.milvus_client:
+                embedding_gen = EmbeddingGenerator()
+            st.session_state.retriever = Retriever(
+                neo4j_client=st.session_state.neo4j_client,
+                milvus_client=st.session_state.milvus_client,
+                embedding_generator=embedding_gen
+            )
+            st.session_state.response_builder = ResponseBuilder()
+        except Exception as e:
+            st.warning(f"Could not initialize query engine: {e}")
+    
+    # Check if databases have data (only once)
+    if not st.session_state.databases_checked and st.session_state.neo4j_client:
+        try:
+            neo4j_stats = st.session_state.neo4j_client.get_database_stats()
+            neo4j_has_data = neo4j_stats.get('total_nodes', 0) > 0
+            
+            milvus_has_data = False
+            if st.session_state.milvus_client:
+                try:
+                    milvus_stats = st.session_state.milvus_client.get_collection_stats()
+                    milvus_has_data = milvus_stats.get('entity_count', 0) > 0
+                except:
+                    milvus_has_data = False
+            
+            # Databases have data if Neo4j has nodes (Milvus is optional)
+            st.session_state.databases_have_data = neo4j_has_data
+            st.session_state.databases_checked = True
+        except Exception as e:
+            st.session_state.databases_have_data = False
+            st.session_state.databases_checked = True
 
 # Sidebar for CSV upload
 with st.sidebar:
@@ -135,6 +183,8 @@ with st.sidebar:
                                 process_pdfs=(pdf_processor is not None)
                             )
                             st.session_state.data_loaded = True
+                            st.session_state.databases_have_data = True  # Update flag after ingestion
+                            st.session_state.databases_checked = True
                             st.success("✓ CSV data successfully ingested into Neo4j!")
                             
                             # Get database stats
@@ -191,21 +241,171 @@ if st.session_state.neo4j_client is None:
     
     **Error Details:** See sidebar for more information.
     """)
-elif not st.session_state.data_loaded:
-    st.info("📁 **Ready to upload CSV**")
+elif not st.session_state.databases_have_data:
+    # Databases are empty - show upload prompt
+    st.info("📁 **Databases are Empty - Upload CSV Required**")
     st.markdown("""
-    Please upload a CSV file in the sidebar to begin ingesting data into Neo4j.
+    Your Neo4j and Milvus databases are currently empty. 
     
-    Once the data is ingested, you'll be able to query it using the chat interface.
+    **To get started:**
+    1. Upload a CSV file in the sidebar
+    2. Click "🚀 Ingest CSV into Neo4j" to load data
+    3. Once data is ingested, you'll be able to query it using the chat interface
+    
+    **Note:** If you've already ingested data before, make sure your databases are running and accessible.
     """)
+    
+    # Show database status
+    with st.expander("📊 Current Database Status", expanded=True):
+        try:
+            neo4j_stats = st.session_state.neo4j_client.get_database_stats()
+            st.write(f"**Neo4j:** {neo4j_stats.get('total_nodes', 0)} nodes")
+            if st.session_state.milvus_client:
+                try:
+                    milvus_stats = st.session_state.milvus_client.get_collection_stats()
+                    st.write(f"**Milvus:** {milvus_stats.get('entity_count', 0)} chunks")
+                except:
+                    st.write("**Milvus:** Not available")
+        except:
+            st.write("**Status:** Unable to check")
 else:
+    # Databases have data - show chat interface
     st.success("✅ **System Ready!**")
-    st.markdown("""
-    Your CSV data has been successfully ingested into Neo4j. 
-    You can now query the data using the chat interface.
-    """)
     
-    # Placeholder for future chat interface
+    # Show database stats
+    with st.expander("📊 Database Status", expanded=False):
+        try:
+            neo4j_stats = st.session_state.neo4j_client.get_database_stats()
+            st.write(f"**Neo4j:** {neo4j_stats.get('total_nodes', 0)} nodes, {neo4j_stats.get('total_relationships', 0)} relationships")
+            if neo4j_stats.get('by_label'):
+                st.write("**Nodes by type:**")
+                for label, count in neo4j_stats['by_label'].items():
+                    st.write(f"  - {label}: {count}")
+            
+            if st.session_state.milvus_client:
+                try:
+                    milvus_stats = st.session_state.milvus_client.get_collection_stats()
+                    st.write(f"**Milvus:** {milvus_stats.get('entity_count', 0)} PDF chunks")
+                except:
+                    st.write("**Milvus:** Not available")
+        except Exception as e:
+            st.write(f"Could not retrieve stats: {e}")
+    
+    # Chat Interface
     st.subheader("💬 Chat Interface")
-    st.write("Chat interface will be implemented in the next steps...")
+    st.markdown("Ask questions about parts, models, or equipment. The system will search both structured data and PDF manuals.")
+    
+    # Display conversation history
+    if st.session_state.conversation_history:
+        st.markdown("### Conversation History")
+        for i, message in enumerate(st.session_state.conversation_history):
+            role = message.get('role', 'user')
+            content = message.get('content', '')
+            
+            if role == 'user':
+                with st.chat_message("user"):
+                    st.write(content)
+            else:
+                with st.chat_message("assistant"):
+                    st.markdown(content)
+                    
+                    # Display structured sections if available
+                    sections = message.get('sections', {})
+                    pdf_urls = message.get('pdf_urls', [])
+                    
+                    # Part Information Section
+                    if sections.get('part_info'):
+                        with st.expander("📦 Part Information", expanded=True):
+                            for part in sections['part_info']:
+                                st.markdown(f"**Parts Town #:** {part.get('parts_town_number', 'N/A')}")
+                                st.markdown(f"**Manufacturer #:** {part.get('manufacturer_number', 'N/A')}")
+                                st.markdown(f"**Description:** {part.get('description', 'N/A')}")
+                                if part.get('models'):
+                                    st.markdown(f"**Used in Models:** {', '.join(part['models'][:10])}")
+                                st.divider()
+                    
+                    # Model Information Section
+                    if sections.get('model_info'):
+                        with st.expander("🏭 Model Information", expanded=True):
+                            for model in sections['model_info']:
+                                st.markdown(f"**Model Name:** {model.get('model_name', 'N/A')}")
+                                if model.get('parts'):
+                                    st.markdown(f"**Parts:** {', '.join(model['parts'][:10])}")
+                                st.divider()
+                    
+                    # PDF Excerpts Section
+                    if sections.get('pdf_excerpts'):
+                        with st.expander("📄 PDF Manual Excerpts", expanded=False):
+                            for excerpt in sections['pdf_excerpts']:
+                                st.markdown(f"**Page {excerpt.get('page_number', 'N/A')}** (Similarity: {excerpt.get('similarity', 0):.2f})")
+                                st.markdown(f"*Parts Town #: {excerpt.get('parts_town_number', 'N/A')}*")
+                                st.markdown(excerpt.get('text', '')[:500] + "..." if len(excerpt.get('text', '')) > 500 else excerpt.get('text', ''))
+                                st.divider()
+                    
+                    # PDF URLs
+                    if pdf_urls:
+                        st.markdown("### 📎 PDF Manuals")
+                        for pdf_url in pdf_urls:
+                            st.markdown(f"- [{pdf_url}]({pdf_url})")
+    
+    # Chat input
+    user_query = st.chat_input("Ask a question about parts or models...")
+    
+    if user_query:
+        # Add user message to history
+        st.session_state.conversation_history.append({
+            'role': 'user',
+            'content': user_query
+        })
+        
+        # Process query
+        if st.session_state.query_parser and st.session_state.retriever and st.session_state.response_builder:
+            with st.spinner("Processing your query..."):
+                try:
+                    # Parse query
+                    parsed_query = st.session_state.query_parser.parse(user_query)
+                    
+                    # Retrieve data
+                    retrieval_results = st.session_state.retriever.retrieve(
+                        parsed_query,
+                        top_k=5,
+                        similarity_threshold=0.7
+                    )
+                    
+                    # Build response
+                    response = st.session_state.response_builder.build_response(
+                        user_query=user_query,
+                        retrieval_results=retrieval_results,
+                        conversation_history=st.session_state.conversation_history[:-1]  # Exclude current message
+                    )
+                    
+                    # Add assistant response to history
+                    st.session_state.conversation_history.append({
+                        'role': 'assistant',
+                        'content': response['response'],
+                        'sections': response['sections'],
+                        'pdf_urls': response['pdf_urls'],
+                        'sources': response['sources']
+                    })
+                    
+                    # Force rerun to display new message
+                    st.rerun()
+                    
+                except Exception as e:
+                    error_msg = f"I encountered an error processing your query: {str(e)}"
+                    st.session_state.conversation_history.append({
+                        'role': 'assistant',
+                        'content': error_msg
+                    })
+                    st.error(error_msg)
+                    st.exception(e)
+                    st.rerun()
+        else:
+            st.error("Query engine not initialized. Please check your database connections.")
+    
+    # Clear conversation button
+    if st.session_state.conversation_history:
+        if st.button("🗑️ Clear Conversation"):
+            st.session_state.conversation_history = []
+            st.rerun()
 
