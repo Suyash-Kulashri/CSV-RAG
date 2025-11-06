@@ -57,3 +57,6 @@ neo4j_data/
 # Milvus data
 milvus_data/
 
+# Downloaded PDFs
+downloaded_pdfs/
+

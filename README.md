@@ -91,7 +91,34 @@ Expected CSV columns:
 ## Development Status
 
 - ✅ CSV to Neo4j ingestion
-- ⏳ PDF to Milvus ingestion
+- ✅ PDF to Milvus ingestion (Phase 2 Complete!)
 - ⏳ Chat interface
 - ⏳ Query engine
+
+## Phase 2: PDF Processing Pipeline
+
+The system now automatically processes PDFs when ingesting CSV data:
+
+1. **Extracts unique PDF URLs** from CSV
+2. **Downloads PDFs** (only once per unique URL)
+3. **Extracts text** using pdfplumber
+4. **Chunks text** into 500-1000 token pieces with overlap
+5. **Generates embeddings** using BGE-M3 (free, 1024-dimensional)
+6. **Stores in Milvus** with metadata:
+   - Parts Town #
+   - Manufacturer #
+   - PDF URL
+   - Page number
+   - Chunk index
+
+**Setup Milvus:**
+1. Install Milvus: https://milvus.io/docs/install_standalone-docker.md
+2. Start Milvus: `docker-compose up -d` (or use Milvus Lite)
+3. Update `.env` with Milvus connection (optional):
+   ```
+   MILVUS_HOST=localhost
+   MILVUS_PORT=19530
+   ```
+
+PDF processing runs **in parallel** with Neo4j ingestion for efficiency!
 

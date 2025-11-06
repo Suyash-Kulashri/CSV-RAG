@@ -1,27 +1,30 @@
 """
-Module for ingesting CSV data into Neo4j graph database.
+Module for ingesting CSV data into Neo4j graph database and PDFs into Milvus.
 """
 import pandas as pd
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 import sys
 import os
 
 # Add parent directory to path to import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.neo4j_client import Neo4jClient
+from data_ingestion.pdf_to_milvus import PDFToMilvus
 
 
 class CSVToNeo4j:
     """Handle CSV ingestion into Neo4j."""
     
-    def __init__(self, neo4j_client: Neo4jClient):
+    def __init__(self, neo4j_client: Neo4jClient, pdf_processor: Optional[PDFToMilvus] = None):
         """
         Initialize CSV to Neo4j converter.
         
         Args:
             neo4j_client: Neo4j client instance
+            pdf_processor: Optional PDF to Milvus processor (for parallel PDF processing)
         """
         self.neo4j = neo4j_client
+        self.pdf_processor = pdf_processor
         self.processed_parts: Set[str] = set()
         self.processed_models: Set[str] = set()
         self.processed_pdfs: Set[str] = set()
@@ -73,17 +76,21 @@ class CSVToNeo4j:
             return None
         return str(value).strip()
     
-    def ingest_csv(self, csv_path: str, clear_existing: bool = False):
+    def ingest_csv(self, csv_path: str, clear_existing: bool = False, process_pdfs: bool = True):
         """
-        Main method to ingest CSV into Neo4j.
+        Main method to ingest CSV into Neo4j and optionally process PDFs into Milvus.
         
         Args:
             csv_path: Path to CSV file
             clear_existing: Whether to clear existing database before ingestion
+            process_pdfs: Whether to process PDFs into Milvus (requires pdf_processor)
         """
         if clear_existing:
             print("Clearing existing database...")
             self.neo4j.clear_database()
+            if self.pdf_processor and process_pdfs:
+                print("Clearing Milvus collection...")
+                self.pdf_processor.milvus_client.clear_collection()
         
         # Read CSV
         df = self.read_csv(csv_path)
@@ -92,6 +99,20 @@ class CSVToNeo4j:
         columns = self.extract_columns(df)
         
         print("\nStarting Neo4j ingestion...")
+        
+        # Process PDFs in parallel if enabled
+        pdf_thread = None
+        if process_pdfs and self.pdf_processor:
+            import threading
+            # Pass DataFrame to PDF processor
+            pdf_processor_instance = self.pdf_processor
+            pdf_thread = threading.Thread(
+                target=pdf_processor_instance.process_csv_pdfs,
+                args=(csv_path, df)
+            )
+            pdf_thread.daemon = True
+            pdf_thread.start()
+            print("  → PDF processing started in parallel...")
         
         # Process each row
         total_rows = len(df)
@@ -160,16 +181,25 @@ class CSVToNeo4j:
                     # Create relationship between part and PDF (using Parts Town #)
                     self.neo4j.create_part_pdf_relationship(parts_town_number, pdf_url)
         
-        print(f"\n✓ Ingestion complete!")
+        print(f"\n✓ Neo4j Ingestion complete!")
         print(f"  - Models processed: {len(self.processed_models)}")
         print(f"  - Parts processed: {len(self.processed_parts)}")
-        print(f"  - PDFs processed: {len(self.processed_pdfs)}")
+        print(f"  - PDFs linked: {len(self.processed_pdfs)}")
         print(f"  - Total rows processed: {row_num}")
+        
+        # Wait for PDF processing to complete if it was started
+        if process_pdfs and self.pdf_processor:
+            print("\n⏳ Waiting for PDF processing to complete...")
+            pdf_thread.join()  # Wait for PDF processing thread to finish
+            milvus_stats = self.pdf_processor.milvus_client.get_collection_stats()
+            print(f"\n✓ PDF Processing complete!")
+            print(f"  - PDFs processed: {len(self.pdf_processor.processed_pdfs)}")
+            print(f"  - Chunks in Milvus: {milvus_stats.get('entity_count', 0)}")
         
         # Verify data was written to Neo4j
         try:
             stats = self.neo4j.get_database_stats()
-            print(f"\n📊 Database Verification:")
+            print(f"\n📊 Neo4j Database Verification:")
             print(f"  - Total nodes in database: {stats['total_nodes']}")
             print(f"  - Total relationships in database: {stats['total_relationships']}")
             if stats['by_label']:
