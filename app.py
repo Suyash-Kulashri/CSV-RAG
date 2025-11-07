@@ -126,8 +126,6 @@ with st.sidebar:
     else:
         st.warning("⚠️ Milvus Not Connected (PDF processing disabled)")
     
-    st.caption("Using credentials from .env file")
-    
     st.divider()
     
     # CSV upload section
@@ -165,7 +163,7 @@ with st.sidebar:
             if st.session_state.neo4j_client is not None:
                 clear_existing = st.checkbox("Clear existing data before ingestion", value=False)
                 
-                if st.button("🚀 Ingest CSV into Neo4j"):
+                if st.button("📤 Upload"):
                     with st.spinner("Ingesting CSV data into Neo4j and processing PDFs..."):
                         try:
                             # Initialize PDF processor if Milvus is available
@@ -308,45 +306,8 @@ else:
             else:
                 with st.chat_message("assistant"):
                     st.markdown(content)
-                    
-                    # Display structured sections if available
-                    sections = message.get('sections', {})
-                    pdf_urls = message.get('pdf_urls', [])
-                    
-                    # Part Information Section
-                    if sections.get('part_info'):
-                        with st.expander("📦 Part Information", expanded=True):
-                            for part in sections['part_info']:
-                                st.markdown(f"**Parts Town #:** {part.get('parts_town_number', 'N/A')}")
-                                st.markdown(f"**Manufacturer #:** {part.get('manufacturer_number', 'N/A')}")
-                                st.markdown(f"**Description:** {part.get('description', 'N/A')}")
-                                if part.get('models'):
-                                    st.markdown(f"**Used in Models:** {', '.join(part['models'][:10])}")
-                                st.divider()
-                    
-                    # Model Information Section
-                    if sections.get('model_info'):
-                        with st.expander("🏭 Model Information", expanded=True):
-                            for model in sections['model_info']:
-                                st.markdown(f"**Model Name:** {model.get('model_name', 'N/A')}")
-                                if model.get('parts'):
-                                    st.markdown(f"**Parts:** {', '.join(model['parts'][:10])}")
-                                st.divider()
-                    
-                    # PDF Excerpts Section
-                    if sections.get('pdf_excerpts'):
-                        with st.expander("📄 PDF Manual Excerpts", expanded=False):
-                            for excerpt in sections['pdf_excerpts']:
-                                st.markdown(f"**Page {excerpt.get('page_number', 'N/A')}** (Similarity: {excerpt.get('similarity', 0):.2f})")
-                                st.markdown(f"*Parts Town #: {excerpt.get('parts_town_number', 'N/A')}*")
-                                st.markdown(excerpt.get('text', '')[:500] + "..." if len(excerpt.get('text', '')) > 500 else excerpt.get('text', ''))
-                                st.divider()
-                    
-                    # PDF URLs
-                    if pdf_urls:
-                        st.markdown("### 📎 PDF Manuals")
-                        for pdf_url in pdf_urls:
-                            st.markdown(f"- [{pdf_url}]({pdf_url})")
+                    # PDF URLs are now integrated within the response text itself
+                    # No separate PDF URLs section displayed
     
     # Chat input
     user_query = st.chat_input("Ask a question about parts or models...")
@@ -362,8 +323,16 @@ else:
         if st.session_state.query_parser and st.session_state.retriever and st.session_state.response_builder:
             with st.spinner("Processing your query..."):
                 try:
+                    print(f"\n{'='*60}")
+                    print(f"USER QUERY: {user_query}")
+                    print(f"{'='*60}")
+                    
                     # Parse query
                     parsed_query = st.session_state.query_parser.parse(user_query)
+                    print(f"\nParsed Query:")
+                    print(f"  Intent: {parsed_query.get('intent')}")
+                    print(f"  Parts: {parsed_query.get('parts_town_numbers')}")
+                    print(f"  Models: {parsed_query.get('model_names')}")
                     
                     # Retrieve data
                     retrieval_results = st.session_state.retriever.retrieve(
@@ -372,23 +341,57 @@ else:
                         similarity_threshold=0.7
                     )
                     
-                    # Build response
-                    response = st.session_state.response_builder.build_response(
-                        user_query=user_query,
-                        retrieval_results=retrieval_results,
-                        conversation_history=st.session_state.conversation_history[:-1]  # Exclude current message
+                    print(f"\nRetrieval Results:")
+                    print(f"  Neo4j parts: {len(retrieval_results.get('neo4j_results', {}).get('parts', []))}")
+                    print(f"  Neo4j models: {len(retrieval_results.get('neo4j_results', {}).get('models', []))}")
+                    print(f"  Milvus chunks: {len(retrieval_results.get('milvus_results', []))}")
+                    
+                    # Get context and metadata for streaming
+                    neo4j_results = retrieval_results.get('neo4j_results', {})
+                    milvus_results = retrieval_results.get('milvus_results', [])
+                    query_intent = retrieval_results.get('query_intent', 'general')
+                    
+                    context = st.session_state.response_builder._build_context(neo4j_results, milvus_results)
+                    
+                    # Stream the response in real-time
+                    with st.chat_message("assistant"):
+                        response_placeholder = st.empty()
+                        full_response = ""
+                        
+                        # Get streaming generator
+                        stream_generator = st.session_state.response_builder.generate_streaming_response(
+                            user_query=user_query,
+                            context=context,
+                            conversation_history=st.session_state.conversation_history[:-1],
+                            query_intent=query_intent
+                        )
+                        
+                        # Stream the response word by word
+                        for chunk in stream_generator:
+                            full_response += chunk
+                            response_placeholder.markdown(full_response + "▌")  # Cursor effect
+                        
+                        # Final response without cursor
+                        response_placeholder.markdown(full_response)
+                    
+                    # Extract PDF URLs
+                    pdf_urls = st.session_state.response_builder._extract_relevant_pdf_urls(
+                        neo4j_results, milvus_results, query_intent
                     )
+                    
+                    print(f"\nResponse completed:")
+                    print(f"  PDF URLs: {len(pdf_urls)}")
+                    print(f"{'='*60}\n")
                     
                     # Add assistant response to history
                     st.session_state.conversation_history.append({
                         'role': 'assistant',
-                        'content': response['response'],
-                        'sections': response['sections'],
-                        'pdf_urls': response['pdf_urls'],
-                        'sources': response['sources']
+                        'content': full_response,
+                        'pdf_urls': pdf_urls,
+                        'sources': []
                     })
                     
-                    # Force rerun to display new message
+                    # Force rerun to update the display
                     st.rerun()
                     
                 except Exception as e:

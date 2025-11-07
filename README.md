@@ -5,29 +5,52 @@ A Streamlit application for querying Partstown Trane parts data using Neo4j grap
 ## Project Structure
 
 ```
-project/
+CSV RAG/
 │
-├── app.py                 # Main Streamlit app
-├── data_ingestion/
-│   ├── csv_to_neo4j.py   # Load CSV into Neo4j
-│   ├── pdf_to_milvus.py  # Process PDFs into Milvus
-│   ├── pdf_downloader.py # Download unique PDFs
-│   └── verify_parts.py    # Verify parts ingestion
+├── app.py                      # Main Streamlit application
+├── requirements.txt            # Python dependencies
+├── docker-compose.yml          # Milvus services configuration
+├── README.md                   # This file
 │
-├── database/
-│   ├── neo4j_client.py   # Neo4j connection & queries
-│   ├── milvus_client.py  # Milvus connection & search
-│   ├── test_neo4j_connection.py  # Test Neo4j connection
-│   └── diagnose_neo4j.py  # Diagnose Neo4j database
+├── data/                       # Data files
+│   └── Scrapped_data.csv       # Sample parts data
 │
-├── query_engine/
-│   ├── query_parser.py   # Parse user questions
-│   ├── retriever.py      # Retrieve from both DBs
-│   └── response_builder.py # Combine and format results
+├── data_ingestion/             # Data ingestion modules
+│   ├── csv_to_neo4j.py         # CSV → Neo4j ingestion
+│   ├── pdf_to_milvus.py        # PDF → Milvus processing
+│   ├── pdf_downloader.py       # PDF download utility
+│   └── verify_parts.py         # Ingestion verification
 │
-└── utils/
-    ├── embeddings.py     # Generate embeddings
-    └── pdf_processor.py  # Extract text from PDFs
+├── database/                   # Database clients
+│   ├── neo4j_client.py         # Neo4j connection & queries
+│   ├── milvus_client.py        # Milvus connection & search
+│   ├── test_neo4j_connection.py    # Connection testing
+│   └── diagnose_neo4j.py       # Database diagnostics
+│
+├── query_engine/               # Query processing
+│   ├── query_parser.py         # Parse user queries
+│   ├── retriever.py            # Retrieve from databases
+│   └── response_builder.py     # Build LLM responses
+│
+├── utils/                      # Utility modules
+│   ├── embeddings.py           # Embedding generation (BGE-M3)
+│   └── pdf_processor.py        # PDF text extraction
+│
+└── docs/                       # Documentation
+    ├── setup/                  # Database setup guides
+    │   ├── NEO4J_SETUP.md      # Neo4j installation
+    │   ├── MILVUS_SETUP.md     # Milvus installation
+    │   └── ATTU_SETUP.md       # Attu (Milvus UI) setup
+    │
+    ├── guides/                 # User guides
+    │   ├── TESTING_GUIDE.md            # Testing procedures
+    │   ├── VALIDATION_CHECKLIST.md     # Validation protocols
+    │   └── PDF_DETAIL_FORMAT.md        # PDF response formats
+    │
+    └── implementation/         # Implementation details
+        ├── ANTI_HALLUCINATION_MEASURES.md  # Anti-hallucination safeguards
+        ├── FIXES_APPLIED.md                # Bug fixes & solutions
+        └── UI_FORMATTING_CHANGES.md        # UI/UX improvements
 ```
 
 ## Setup
@@ -69,6 +92,23 @@ streamlit run app.py
 2. Upload a CSV file with parts data in the sidebar
 3. Click "Ingest CSV into Neo4j" to load the data
 4. Query the data using the chat interface (coming soon)
+
+## Documentation
+
+### Setup Guides
+- **[Neo4j Setup](docs/setup/NEO4J_SETUP.md)** - Install and configure Neo4j
+- **[Milvus Setup](docs/setup/MILVUS_SETUP.md)** - Install and configure Milvus
+- **[Attu Setup](docs/setup/ATTU_SETUP.md)** - Milvus web UI configuration
+
+### User Guides
+- **[Testing Guide](docs/guides/TESTING_GUIDE.md)** - Test PDF retrieval functionality
+- **[Validation Checklist](docs/guides/VALIDATION_CHECKLIST.md)** - Validate system accuracy
+- **[PDF Detail Format](docs/guides/PDF_DETAIL_FORMAT.md)** - PDF response formatting
+
+### Implementation Details
+- **[Anti-Hallucination Measures](docs/implementation/ANTI_HALLUCINATION_MEASURES.md)** - LLM accuracy safeguards
+- **[Fixes Applied](docs/implementation/FIXES_APPLIED.md)** - Bug fixes and solutions
+- **[UI Formatting Changes](docs/implementation/UI_FORMATTING_CHANGES.md)** - UI/UX improvements
 
 **Utility Scripts:**
 - Test Neo4j connection: `python database/test_neo4j_connection.py`

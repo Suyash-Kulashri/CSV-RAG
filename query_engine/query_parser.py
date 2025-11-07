@@ -136,12 +136,37 @@ class QueryParser:
                          manufacturer_numbers: List[str],
                          model_names: List[str]) -> str:
         """Determine the intent of the query."""
+        # Keywords that indicate user wants specific PDF information
+        pdf_detail_keywords = [
+            'install', 'installation', 'setup', 'mount',
+            'specification', 'specs', 'dimensions', 'size',
+            'troubleshoot', 'repair', 'fix', 'diagnose',
+            'maintain', 'maintenance', 'service',
+            'wiring', 'electrical', 'connect', 'wire',
+            'remove', 'replace', 'disassemble',
+            'ground', 'grounding', 'seal', 'sealing',
+            'procedure', 'steps', 'instructions',
+            'how to', 'how do', 'what are the steps',
+            'can you tell me about', 'tell me about',
+            'start up', 'startup', 'start-up', 'operation',
+            'sequence', 'cooling', 'heating', 'control',
+            'describes', 'describe'
+        ]
+        
+        # Check if query is asking for specific PDF information
+        has_pdf_keywords = any(keyword in query_lower for keyword in pdf_detail_keywords)
+        has_entity = parts_town_numbers or manufacturer_numbers or model_names
+        
+        # PDF detail if has PDF keywords
+        if has_pdf_keywords:
+            return 'pdf_detail'
+        
         # If specific part/model mentioned, prioritize that
         if parts_town_numbers or manufacturer_numbers:
-            return 'part'
+            return 'part_info'
         
         if model_names:
-            return 'model'
+            return 'model_info'
         
         # Check for comparison queries
         comparison_keywords = ['compare', 'difference', 'vs', 'versus', 'between']
@@ -151,12 +176,12 @@ class QueryParser:
         # Check for part-related keywords
         part_keywords = ['part', 'parts', 'component', 'bearing', 'valve', 'sensor']
         if any(kw in query_lower for kw in part_keywords):
-            return 'part'
+            return 'part_info'
         
         # Check for model-related keywords
         model_keywords = ['model', 'unit', 'system', 'equipment']
         if any(kw in query_lower for kw in model_keywords):
-            return 'model'
+            return 'model_info'
         
         # Default to general
         return 'general'
